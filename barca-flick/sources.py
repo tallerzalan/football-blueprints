@@ -33,17 +33,49 @@ OF_COMPS = {
     "Copa del Rey": ("espana", "cup.txt"),
 }
 EXTRA_CSV = Path(__file__).with_name("extra_matches.csv")
+# one display name per club across sources (football-data.co.uk uses short codes, others full names)
+OPPONENT_NAMES = {
+    "Alaves": "Alavés", "Ath Bilbao": "Athletic Club", "Athletic Bilbao": "Athletic Club",
+    "Ath Madrid": "Atlético Madrid", "Club Atlético de Madrid": "Atlético Madrid", "Betis": "Real Betis",
+    "Celta": "Celta Vigo", "Espanol": "Espanyol", "Leganes": "Leganés", "Oviedo": "Real Oviedo",
+    "Santander": "Racing Santander", "Sociedad": "Real Sociedad", "Vallecano": "Rayo Vallecano",
+    "Valladolid": "Real Valladolid", "Valencia CF": "Valencia", "UD Barbastro": "Barbastro",
+    "La Coruna": "Deportivo La Coruña", "Malaga": "Málaga",
+}
 MONTHS = {m: i for i, m in enumerate(
     ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], 1)}
 
 
-def _get(url: str) -> str | None:
-    r = requests.get(url, timeout=30)
-    if r.status_code == 404:
+SNAP_DIR = Path(__file__).with_name("data")  # bundled copies of every source file (see refresh_snapshot.py)
+UA = "BarcaFlickDashboard/1.0 (+https://github.com/tallerzalan/football-blueprints)"
+FETCH_LOG: list[dict] = []  # what came from where during the last load_all()
+
+
+def snap_path(url: str) -> Path:
+    return SNAP_DIR / re.sub(r"[^A-Za-z0-9._-]+", "_", url.split("://", 1)[-1])
+
+
+def _get(url: str, required: bool = True) -> str | None:
+    """Live fetch with a short timeout; falls back to the bundled snapshot so one slow or
+    blocked source cannot take the whole app down. Returns None for files that don't exist."""
+    try:
+        r = requests.get(url, timeout=15, headers={"User-Agent": UA})
+        if r.status_code == 404:
+            FETCH_LOG.append({"url": url, "status": "not published (404)"})
+            return None
+        r.raise_for_status()
+        r.encoding = "utf-8"
+        FETCH_LOG.append({"url": url, "status": "live"})
+        return r.text
+    except Exception as e:  # network error, timeout, 403/5xx ...
+        snap = snap_path(url)
+        if snap.exists():
+            FETCH_LOG.append({"url": url, "status": f"snapshot ({type(e).__name__})"})
+            return snap.read_text(encoding="utf-8")
+        FETCH_LOG.append({"url": url, "status": f"failed ({type(e).__name__})"})
+        if required:
+            raise
         return None
-    r.raise_for_status()
-    r.encoding = "utf-8"
-    return r.text
 
 
 def season_of(d) -> str:
@@ -387,6 +419,7 @@ def parse_full_league(txt: str) -> dict[str, pd.DataFrame]:
 
 # --------------------------------------------------------------------------- assembly
 def load_all() -> dict:
+    FETCH_LOG.clear()
     fd = {s: load_fd_league(s) for s in SEASONS}
     liga = pd.concat([team_rows(fd[s], TEAM_FD) for s in SEASONS], ignore_index=True)
     liga["competition"], liga["round"], liga["note"] = "La Liga", None, ""
@@ -397,7 +430,7 @@ def load_all() -> dict:
         coverage.append({"season": s, "competition": "La Liga", "source": "football-data.co.uk",
                          "games": int((liga.season == s).sum())})
         for comp, (repo, fname) in OF_COMPS.items():
-            txt = _get(OF_RAW.format(repo=repo, path=f"{OF_DIR[s]}/{fname}"))
+            txt = _get(OF_RAW.format(repo=repo, path=f"{OF_DIR[s]}/{fname}"), required=False)
             df = parse_of_fixtures(txt, comp, s) if txt else pd.DataFrame()
             if len(df):
                 other.append(df)
@@ -407,16 +440,32 @@ def load_all() -> dict:
         coverage.append({"season": s, "competition": "Supercopa de España", "source": "not available",
                          "games": 0})
 
+    conflicts = []
     if EXTRA_CSV.exists():
         ex = pd.read_csv(EXTRA_CSV, parse_dates=["date"])
         if len(ex):
             ex["season"] = ex["date"].map(season_of)
             ex["note"] = ex["note"].fillna("") if "note" in ex else ""
-            other.append(ex)
-            for (s, c), n in ex.groupby(["season", "competition"]).size().items():
-                coverage.append({"season": s, "competition": c, "source": "extra_matches.csv", "games": n})
+            ex["source"] = ex["source"].fillna("extra_matches.csv") if "source" in ex else "extra_matches.csv"
+            ex["source"] = ex["source"].str.replace(r"^Wikipedia.*", "Wikipedia", regex=True)
+            if "opp_country" not in ex:
+                ex["opp_country"] = None
+            ex.loc[ex.competition.isin(["Copa del Rey", "Supercopa de España"]), "opp_country"] = "ESP"
+            # a match already in a live source wins; the CSV only fills gaps (and is cross-checked)
+            have = pd.concat([liga] + other, ignore_index=True)[["date", "competition", "gf", "ga"]]
+            both = ex.merge(have, on=["date", "competition"], how="left", suffixes=("", "_live"), indicator=True)
+            dup = both["_merge"] == "both"
+            for _, r in both[dup & ((both.gf != both.gf_live) | (both.ga != both.ga_live))].iterrows():
+                conflicts.append(f"{r.date:%d %b %Y} {r.competition} vs {r.opponent}: CSV {r.gf}-{r.ga}, "
+                                 f"live source {int(r.gf_live)}-{int(r.ga_live)}")
+            ex = ex[~dup.values]
+            if len(ex):
+                other.append(ex)
+                for (s, c, src), n in ex.groupby(["season", "competition", "source"]).size().items():
+                    coverage.append({"season": s, "competition": c, "source": src, "games": n})
 
     allm = pd.concat([liga] + other, ignore_index=True).sort_values("date").reset_index(drop=True)
+    allm["opponent"] = allm["opponent"].replace(OPPONENT_NAMES)
     allm["result"] = [_result(a, b) for a, b in zip(allm.gf, allm.ga)]
     allm["score"] = allm.gf.astype(int).astype(str) + "–" + allm.ga.astype(int).astype(str)
     cov = pd.DataFrame(coverage)
@@ -424,6 +473,13 @@ def load_all() -> dict:
         source=("source", lambda x: " + ".join(sorted(set(x) - {"not available"})) or "not available"),
         games=("games", "sum"))
 
-    full_txt = _get(OF_RAW.format(repo="espana", path=FULL_PATH))
+    full_txt = _get(OF_RAW.format(repo="espana", path=FULL_PATH), required=False)
     detail = parse_full_league(full_txt) if full_txt else None
-    return {"fd": fd, "matches": allm, "coverage": cov, "detail": detail}
+    return {"fd": fd, "matches": allm, "coverage": cov, "detail": detail, "fetch_log": pd.DataFrame(FETCH_LOG),
+            "conflicts": conflicts}
+
+
+def all_source_urls() -> list[str]:
+    urls = [FD_URL.format(code=FD_CODE[s]) for s in SEASONS]
+    urls += [OF_RAW.format(repo=r, path=f"{OF_DIR[s]}/{f}") for s in SEASONS for r, f in OF_COMPS.values()]
+    return urls + [OF_RAW.format(repo="espana", path=FULL_PATH)]

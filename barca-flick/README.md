@@ -14,9 +14,12 @@ Players 2025/26 (apps, minutes, goals, pens, cards, goal timing, game states, re
 Opponents · Match log (CSV download) · Data & coverage
 
 ## Data
-- football-data.co.uk La Liga CSVs (stats + odds)
+- football-data.co.uk La Liga CSVs (stats + odds), fetched live
 - openfootball (public domain): Champions League 2024/25–2025/26, Copa del Rey 2024/25,
-  La Liga 2025/26 detailed file
-- `extra_matches.csv`: add matches missing from the free sources (Supercopa, later Copa/UCL)
+  La Liga 2025/26 detailed file, fetched live
+- `extra_matches.csv`: Supercopa 2024/25–2025/26 and Copa del Rey 2025/26 from Wikipedia season pages
+  (refresh: `python barca-flick/update_from_wikipedia.py`); add your own rows too
+- `data/`: bundled copies of every live file, used automatically when a source is unreachable
+  (refresh: `python barca-flick/refresh_snapshot.py`)
 
 Fetched live, cached 6 h. Unofficial; verify important numbers with official sources.

@@ -70,7 +70,9 @@ def streaks(df: pd.DataFrame) -> pd.DataFrame:
 # ------------------------------------------------------------------ sidebar
 st.sidebar.title("Barça under Hansi Flick")
 seasons = st.sidebar.multiselect("Seasons", S.SEASONS, default=S.SEASONS)
-comps_avail = list(dict.fromkeys(["La Liga", "Champions League", "Copa del Rey"] + sorted(M.competition.unique())))
+comps_avail = list(dict.fromkeys(["La Liga", "Champions League", "Copa del Rey", "Supercopa de España"]
+                                  + sorted(M.competition.unique())))
+comps_avail = [c for c in comps_avail if c in set(M.competition)]
 comps = st.sidebar.multiselect("Competitions", comps_avail, default=comps_avail)
 venues = st.sidebar.multiselect("Venue", ["Home", "Away", "Neutral"], default=["Home", "Away", "Neutral"])
 st.sidebar.divider()
@@ -89,13 +91,21 @@ st.title("FC Barcelona under Hansi Flick")
 last = M.date.max()
 st.caption(f"{len(M)} matches in the data, latest {last:%d %b %Y}. "
            "Competitions without a free source are missing; see the coverage strip below.")
+FL = D["fetch_log"]
+fallback = FL[~FL.status.isin(["live", "not published (404)"])] if len(FL) else FL
+if D.get("conflicts"):
+    st.error("Score disagreement between extra_matches.csv and a live source (live source used): "
+             + "; ".join(D["conflicts"]))
+if len(fallback):
+    st.warning(f"{len(fallback)} source(s) could not be fetched live and use the snapshot bundled in the repo, "
+               "so recent matches may be missing. Details in the Data & coverage tab.")
 
 cov = D["coverage"].pivot(index="competition", columns="season", values="games").reindex(columns=S.SEASONS)
-cov_txt = cov.map(lambda v: "✗ missing" if (pd.isna(v) or v == 0) else f"✓ {int(v)}")
+cov_txt = cov.map(lambda v: "– none in data" if (pd.isna(v) or v == 0) else f"✓ {int(v)}")
 with st.expander("Coverage: matches per competition and season", expanded=False):
     st.dataframe(cov_txt, use_container_width=True)
-    st.caption("✗ = no free source reachable. Missing: Supercopa (all seasons), Copa del Rey 2025/26 & "
-               "2026/27, Champions League 2026/27. Add them yourself in `extra_matches.csv`.")
+    st.caption("2026/27 Copa del Rey and Supercopa: no Barça matches played yet when the data was last updated. "
+               "Champions League 2026/27: no free source reachable yet. Sources per row in the Data & coverage tab.")
 
 # KPI row
 k = record(F)
@@ -152,7 +162,7 @@ with tabs[0]:
         notes.append(f"**{s} La Liga**: {'finished' if done else f'currently (after {games} games)'} "
                      f"{pos}{'st' if pos == 1 else 'th' if pos > 3 else ('nd' if pos == 2 else 'rd')} "
                      f"in the table computed from the data.")
-        for comp in ["Champions League", "Copa del Rey"]:
+        for comp in ["Champions League", "Copa del Rey", "Supercopa de España"]:
             g = M[(M.season == s) & (M.competition == comp)].sort_values("date")
             if len(g):
                 lastm = g.iloc[-1]
@@ -362,7 +372,7 @@ with tabs[3]:
 
 # ================================================================== Europe & cups
 with tabs[4]:
-    for comp in ["Champions League", "Copa del Rey"]:
+    for comp in ["Champions League", "Copa del Rey", "Supercopa de España"]:
         C = M[(M.competition == comp) & M.season.isin(seasons)].sort_values("date")
         st.subheader(comp)
         if C.empty:
@@ -564,6 +574,11 @@ with tabs[7]:
 with tabs[8]:
     st.subheader("What's in the data")
     st.dataframe(D["coverage"], hide_index=True, use_container_width=True)
+    st.subheader("Where each file came from on this load")
+    st.dataframe(D["fetch_log"], hide_index=True, use_container_width=True,
+                 column_config={"url": st.column_config.LinkColumn("Source file")})
+    st.caption("live = downloaded now · snapshot = copy bundled in the repo (`barca-flick/data/`), used when the "
+               "live source is unreachable. Refresh it with `python barca-flick/refresh_snapshot.py`.")
     st.markdown("""
 **Sources**
 - **football-data.co.uk**, La Liga CSVs (`SP1.csv`): results, half-time scores, shots, shots on target,
@@ -571,19 +586,24 @@ with tabs[8]:
 - **openfootball** (public domain, community maintained): Champions League 2024/25–2025/26,
   Copa del Rey 2024/25, and the detailed La Liga 2025/26 file (line-ups, substitutions, scorers, cards,
   referees, venues, attendance).
+- **Wikipedia** season pages ("2024–25 FC Barcelona season" etc.), via `extra_matches.csv`: Supercopa
+  2024/25 & 2025/26 and Copa del Rey 2025/26. Each row keeps the page revision and the LaLiga match-report link.
+  Refresh with `python barca-flick/update_from_wikipedia.py`. Where a live source has the same match, the
+  live source is used and the scores are compared.
 
 **Checks run on load during development**
 - All La Liga scores in openfootball and football-data.co.uk agree (2025/26, 2026/27).
+- Wikipedia agrees with openfootball on all 12 Champions League 2025/26 and all 6 Copa del Rey 2024/25 matches.
 - In the detailed 2025/26 file, parsed goals add up to the score in all 38 Barça games, and every game has 11 starters.
 
 **Known gaps and limitations**
-- No free source reachable here for: **Supercopa de España** (any season), **Copa del Rey 2025/26 & 2026/27**,
-  **Champions League 2026/27**, assists, or player stats outside La Liga 2025/26.
+- No source yet for **Champions League 2026/27**, assists, or player stats outside La Liga 2025/26.
+- Wikipedia is editable by anyone; its match boxes cite LaLiga's official reports, which are linked in the CSV.
 - The 2026/27 season is in progress; numbers change as sources update (cached for 6 hours).
 - The league table is computed (points, GD, GF), not official.
 - Treat everything here as unofficial and verify important numbers with official sources.
 
 **Adding missing matches** – edit `extra_matches.csv` next to `app.py`:
 """)
-    st.code("date,competition,round,opponent,venue,gf,ga,note\n"
-            "YYYY-MM-DD,Supercopa de España,Final,<opponent>,Neutral,<goals for>,<goals against>,", language="csv")
+    st.code("date,competition,round,opponent,venue,gf,ga,note,stadium,attendance,referee,report,source\n"
+            "YYYY-MM-DD,Supercopa de España,Final,<opponent>,Neutral,<goals for>,<goals against>,,,,,,my source", language="csv")
