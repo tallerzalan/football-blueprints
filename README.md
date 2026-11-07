@@ -14,6 +14,7 @@ you can see the range of results before you start.
 
 | Blueprint | What it builds | Data |
 |---|---|---|
+| [barca-flick](barca-flick/) | Streamlit dashboard of FC Barcelona under Hansi Flick (2024/25 to 2026/27): results across competitions, La Liga match stats and odds, 2025/26 player stats | football-data.co.uk, openfootball |
 | [possession-flow](possession-flow/) | Wind-map style animation of each team's possession routes, two teams side by side | StatsBomb open data, FA WSL 2023/24 |
 | [monty-football-chat](monty-football-chat/) | Chat with football data: the LLM answers by writing Python that calls a few fixed data functions, run in a browser sandbox | SkillCorner open data, A-League 2024/25 season aggregates |
 
