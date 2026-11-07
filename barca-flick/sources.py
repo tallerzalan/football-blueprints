@@ -483,3 +483,10 @@ def all_source_urls() -> list[str]:
     urls = [FD_URL.format(code=FD_CODE[s]) for s in SEASONS]
     urls += [OF_RAW.format(repo=r, path=f"{OF_DIR[s]}/{f}") for s in SEASONS for r, f in OF_COMPS.values()]
     return urls + [OF_RAW.format(repo="espana", path=FULL_PATH)]
+
+
+if __name__ == "__main__":
+    # The Streamlit Cloud app was created with this file as its main file; hand over to the dashboard.
+    import runpy
+
+    runpy.run_path(str(Path(__file__).with_name("app.py")), run_name="__main__")
