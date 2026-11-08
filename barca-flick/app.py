@@ -3,6 +3,8 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
+from pathlib import Path
 
 import sources as S
 
@@ -120,7 +122,8 @@ c[6].metric("Clean sheets", k["Clean sheets"])
 c[7].metric("Failed to score", k["Blanks"])
 
 tabs = st.tabs(["Overview", "Form & streaks", "La Liga", "Match stats (La Liga)",
-                "Europe & cups", "Players 2025/26", "Opponents", "Match log", "Data & coverage"])
+                "Europe & cups", "Players 2025/26", "Opponents", "Match log", "Possession flow",
+                "Data & coverage"])
 
 # ================================================================== Overview
 with tabs[0]:
@@ -570,8 +573,28 @@ with tabs[7]:
                                 "xg_for": F2, "xg_against": F2})
     st.download_button("Download CSV", log.to_csv(index=False), "barca_flick_matches.csv", "text/csv")
 
-# ================================================================== Data & coverage
+# ================================================================== Possession flow
+FLOW_DIR = Path(__file__).with_name("flow")
+
+
+@st.cache_data(show_spinner=False)
+def flow_page() -> str:
+    html = (FLOW_DIR / "flow.html").read_text(encoding="utf-8")
+    return html.replace("/*__FLOW_DATA__*/null", (FLOW_DIR / "flow_data.json").read_text(encoding="utf-8"))
+
+
 with tabs[8]:
+    st.markdown("**How Barça moved the ball under each coach**: every pass and carry of a season laid on one "
+                "pitch, drawn like a wind map. Thick, bright channels are the routes used most; colour and "
+                "particle speed show how fast the ball travelled there.")
+    st.caption("Event data with pass and carry locations is not freely available for the Flick years, so this uses "
+               "StatsBomb's open data: La Liga matches from 2007/08–2020/21 (the matches StatsBomb released, not "
+               "every game of each season). The sidebar filters don't apply here. Built from the "
+               "[possession-flow blueprint](https://github.com/opengoalapp/football-blueprints/tree/main/possession-flow).")
+    components.html(flow_page(), height=760, scrolling=True)
+
+# ================================================================== Data & coverage
+with tabs[9]:
     st.subheader("What's in the data")
     st.dataframe(D["coverage"], hide_index=True, use_container_width=True)
     st.subheader("Where each file came from on this load")
@@ -586,6 +609,8 @@ with tabs[8]:
 - **openfootball** (public domain, community maintained): Champions League 2024/25–2025/26,
   Copa del Rey 2024/25, and the detailed La Liga 2025/26 file (line-ups, substitutions, scorers, cards,
   referees, venues, attendance).
+- **StatsBomb open data** (Possession flow tab only): Barça's La Liga passes and carries for one season per
+  coach, 2007/08–2020/21, processed by `flow/prepare_flow.py` into `flow/flow_data.json`.
 - **Wikipedia** season pages ("2024–25 FC Barcelona season" etc.), via `extra_matches.csv`: Supercopa
   2024/25 & 2025/26 and Copa del Rey 2025/26. Each row keeps the page revision and the LaLiga match-report link.
   Refresh with `python barca-flick/update_from_wikipedia.py`. Where a live source has the same match, the
